@@ -1,0 +1,509 @@
+---
+title: "Astrodata"
+author: "Michael Bennett"
+date: "5/2/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(astrodatR)
+library(ggpubr)
+library(MASS)
+library(car)
+library(mvtnorm)
+library(lmtest)
+```
+
+```{r data}
+data("HIP")
+HIP <- HIP[!is.na(HIP$B.V), ]
+HIP4679 <- HIP[, c(4, 6:7, 9)]
+data("GlobClus_mag")
+GC_MWG <- subset(GlobClus_mag, Sample == "MWG", select = 2:3)
+GC_M31 <- subset(GlobClus_mag, Sample == "M31", select = 2:3)
+KGC_MWG <- GC_MWG[, 2]  
+KGC_M31 <- GC_M31[, 2] - 24.44
+kseq <- seq(-15.0, -5.0,0.25)
+loc <- "http://astrostatistics.psu.edu/datasets/"
+grb <- read.table(paste(loc, "GRB_afterglow.dat", sep = ""), header = T, 
+                  skip = 1)
+data("ell_gal_profile")
+NGC4472 <- subset(ell_gal_profile, galaxy == "NGC.4472", select = 2:3)
+NGC4406 <- subset(ell_gal_profile, galaxy == "NGC.4406", select = 2:3)
+NGC4551 <- subset(ell_gal_profile, galaxy == "NGC.4551", select = 2:3)
+locc <- "http://astrostatistics.psu.edu/datasets/"
+quasars <- read.table(paste(locc,"SDSS_quasar.dat", sep = ""), header = T)
+quas <- quasars
+quas[quas == 0 | quas == -1 | quas == -9] <- NA
+quas <- na.omit(quas)
+```
+
+The `HIP` dataset describes a number of variables about stars observed by the European Space Agency Hipparchos satellite:
+
+Variable    | Description
+------------|---------------
+RA          | Right Ascension (Longitude)
+Dec         | Declination (Latitude)
+HIP_Num     | Catalogue Number
+Vmag        | Visual Magnitude (m)
+Plx         | Parallax (milliarcsecond)
+pmRA        | Proper Motion Right Ascension
+pmDE        | Proper Motion Declination
+e_Plx       | Parallax
+B.V         | B-V Color Index (magnitude of light emits through filters blue and visual)
+
+```{r}
+filter1 <- (HIP$RA > 50 & HIP$RA < 100 & HIP$Dec > 0 & HIP$Dec < 25)
+filter2 <- (HIP$pmRA > 90 & HIP$pmRA < 130 & HIP$pmDE > -60 & HIP$pmDE < -10) 
+filter  <- filter1 & filter2 & (HIP$e_Plx < 5) 
+mainseqhyades <- filter & (HIP$Vmag > 4 | HIP$B.V < 0.2)
+logL <- (15 - HIP$Vmag-5 * log10(HIP$Plx)) / 2.5
+hyadesX <- logL[mainseqhyades]
+hyadesY <- HIP$B.V[mainseqhyades]
+regline <- lm(hyadesY ~ hyadesX)
+```
+
+```{r set1, message=FALSE,fig.width=10,fig.height=7, warning=FALSE}
+pointBV <- HIP %>% filter(B.V < 2) %>%
+  ggplot(aes(seq_along(B.V), B.V, color = after_stat(y < 0.5))) +
+  geom_point() +
+  scale_colour_manual(values = c("red3", "blue")) +
+  geom_hline(yintercept = 0, linetype = 'dashed', col = 'black') +
+  coord_flip() +
+  theme_bw() + 
+  theme(legend.position = c(.99, 0), 
+        legend.justification = c(1, 0)) +
+  labs(x = '', y = 'B-V Color Index')
+medi <- paste0("Median: ", median(HIP$B.V))
+histBV <- HIP %>% filter(B.V < 2) %>% 
+  ggplot(aes(B.V, fill = cut(B.V, 100))) + 
+  geom_histogram(binwidth = .09, colour = "goldenrod2", fill = "darkblue") +
+  geom_density(aes(y = after_stat(count) * 0.09), fill = "blue", alpha = 0.3, col = "gold") +
+  labs(title = "Density", x = "Values", y = "Density") +
+  geom_vline(xintercept = median(HIP$B.V), linetype = 'dashed', 
+             col = 'white') +
+  theme_bw() +
+  labs(x = 'B-V Color Index', y = '', subtitle = medi)
+b <- HIP %>% filter(B.V < 2) %>% ggplot() +
+  geom_boxplot(aes(B.V), color = 'darkblue') +
+  geom_vline(xintercept = 0, linetype = 'dashed', col = 'black') +
+  theme_bw() +
+  labs(x = 'B-V Color Index', y = '')
+bbb <- ggplot(mapping = aes(x = hyadesX, y = hyadesY)) + 
+  geom_point(aes(color = after_stat(y < 0.5))) +
+  geom_smooth(aes(x = hyadesX, y = hyadesY), color = 'gold') +
+  scale_colour_manual(values = c("red3", "blue")) +
+  geom_point(aes(x = mean(hyadesX), y = mean(hyadesY)), size = 4, color = 'black') +
+  geom_vline(xintercept = 0, linetype = 'dashed', col = 'black') +
+  geom_label(aes(x = 0.6, y = 0.7, label = 'Mean'), color = 'black') +
+  theme_bw() +
+  coord_flip() +
+  theme(legend.position = c(.99, .99), 
+        legend.justification = c(1, 1)) +
+  labs(x = 'Luminosity', y = 'B-V Color Index')
+```
+
+```{r set2, warning=FALSE, fig.width=10,fig.height=7}
+p1 <- HIP %>% filter(B.V < 2) %>%
+  ggplot(aes(Vmag, B.V)) +
+  geom_point(aes(color = after_stat(y < 0.5)), cex = .7) +
+  scale_colour_manual(values = c("red3", "blue")) +
+  stat_smooth(aes(Vmag, B.V), method = "loess", size = 1.4, fill = "grey50", 
+              alpha = 0.5, level = 0.99, colour = "red") +
+  geom_hline(yintercept = 0, linetype = 'dashed', col = 'black') +
+  geom_vline(xintercept = 6.5, linetype = 'dashed', col = 'darkred') +
+  theme_bw() + coord_flip() + theme(legend.position = c(1, 0), 
+        legend.justification = c(1, 0)) + 
+  labs(x = 'Visual Magnitude', y = 'B-V Color Index')
+p2 <- HIP %>% filter(B.V < 2) %>%
+  filter(RA > 50 & RA < 100 & Dec > 0 & Dec < 25) %>%
+  filter(pmRA > 90 & pmRA < 130 & pmDE > -60 & pmDE < -10) %>% 
+  ggplot(aes(Vmag, B.V)) +
+  geom_point(aes(color = after_stat(y < 0.5))) +
+  scale_colour_manual(values = c("red3", "blue")) +
+  stat_ellipse(aes(Vmag, B.V), color = 'grey') +
+  geom_vline(xintercept = 6.5, linetype = 'dashed', col = 'darkred') +
+  theme_bw() + coord_flip() + theme(legend.position = c(0.01, 1), 
+        legend.justification = c(0, 1.01)) +
+  labs(x = 'Visual Magnitude', y = 'B-V Color Index', 
+       caption = 'Naked eye limit visual magnitued < 6.5')
+```
+
+```{r message=FALSE,fig.width=10,fig.height=7}
+ggarrange(pointBV, histBV, b, bbb) + theme_bw()
+ggarrange(p1, p2) + theme_bw()
+```
+
+The B-V index of the Sun is 0.656. The hottest stars have a B-V index of -0.5 or less while cooler stars B-V index is close to 2.0. Blue means hot and red means cool. 
+
+```{r}
+mwg <- as.data.frame(KGC_MWG)
+m31 <- as.data.frame(KGC_M31)
+meddi <- paste0("Median: ", median(KGC_MWG))
+medd <- paste0("Median: ", median(KGC_M31))
+phh <- mwg %>% ggplot(aes(KGC_MWG, fill = cut(KGC_MWG, 100))) + 
+  geom_histogram(binwidth = .3, colour = "goldenrod2", fill = "darkblue") +
+  geom_density(aes(y = after_stat(count) * .3), fill = "blue", alpha = .3, 
+               col = "gold") +
+  geom_vline(xintercept = median(KGC_MWG), linetype = 'dashed', 
+             col = 'white') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  labs(x = 'Infrared', y = 'N', title = 'Milky Way', subtitle = meddi)
+pph <- m31 %>% ggplot(aes(KGC_M31, fill = cut(KGC_M31, 100))) +
+  geom_histogram(binwidth = .3, colour = "goldenrod2", fill = "darkblue") +
+  geom_density(aes(y = after_stat(count) * .3), fill = "blue", alpha = .3, 
+               col = "gold") + 
+  geom_vline(xintercept = median(KGC_M31), linetype = 'dashed', 
+             col = 'white') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  labs(x = 'Infrared', y = 'N', title = 'M31', subtitle = medd)
+```
+
+```{r fig.width=10,fig.height=7}
+ggarrange(phh, pph) + theme_bw()
+```
+
+```{r warning=FALSE, include=FALSE}
+shapiro.test(KGC_MWG) # consistent with a normal distribution
+shapiro.test(KGC_M31) # not consistent with a normal distribution
+ks.test(KGC_MWG, KGC_M31) # significantly different
+```
+
+1. Shapiro-Wilk Normality Test
+
+For MWG:
+W = 0.98828, p-value = 0.675
+
+- The high p-value (greater than 0.05) suggests that the data in MWG is consistent with a normal distribution. There is no evidence to reject the null hypothesis of normality.
+
+For M31:
+W = 0.98531, p-value = 0.001017
+
+- The low p-value (less than 0.05) indicates that the data in M31 is not consistent with a normal distribution. This suggests that the null hypothesis of normality can be rejected.
+
+2. Kolmogorov-Smirnov (KS) Test
+
+For comparing MWG and M31:
+D = 0.24506, p-value = 0.000711
+
+- The low p-value (less than 0.05) indicates a significant difference between the distributions of MWG and M31. The null hypothesis that the two samples come from the same distribution can be rejected.
+
+- MWG follows a normal distribution, but M31 does not.
+- There is a significant difference between the distributions of MWG and M31.
+
+```{r Gamma-ray bursts}
+grb %>%
+  ggplot() +
+  geom_point(aes(log(t), log(f), color = s), cex = 2) +
+  geom_hline(yintercept = 0, linetype = 'dashed', col = 'black') +
+  theme_bw() +
+  theme(legend.position = c(1, 0.01), 
+        legend.justification = c(1.01, 0)) +
+  labs(x = 'Log Time (s)', y = 'Log Flux (10^-11 erg/cm^2/s, 2-10 keV)', title = 'Gamma-ray bursts',
+       color = 'Error')
+```
+
+Variable    | Description
+------------|---------------
+t           | time of observation (seconds)
+f           | X-ray flux (units of 10^-11 erg/cm^2/s, 2-10 keV)
+s           | measurement error of the flux
+
+```{r include=FALSE}
+model1 <- lm(log(grb$f) ~ log(grb$t))
+bptest(model1)
+shapiro.test(model1$residuals)
+```
+
+Studentized Breusch-Pagan Test:
+
+BP = 7.2356: This is the test statistic for the Breusch-Pagan test, which tests for heteroscedasticity (non-constant variance of residuals) in the regression model.
+df = 1: This indicates that the test is conducted with 1 degree of freedom.
+p-value = 0.007147: The p-value is less than the common significance level (0.05), suggesting that there is evidence of heteroscedasticity in the model.
+
+Shapiro-Wilk Normality Test:
+
+W = 0.8856: This is the test statistic for the Shapiro-Wilk test, which tests whether the residuals are normally distributed.
+p-value = 2.731e-05: The p-value is very small, indicating that the residuals do not follow a normal distribution.
+
+Summary:
+Heteroscedasticity: The Breusch-Pagan test suggests that there is significant evidence of heteroscedasticity in the model.
+Normality: The Shapiro-Wilk test indicates that the residuals deviate from a normal distribution.
+
+```{r include=FALSE}
+NGC4472.fit <- nls(surf_mag ~ -2.5 * log10(I.e * 10^(-(0.868 * n - 0.142) * 
+               ((radius / r.e)^{1 / n} - 1))) + 26, data = NGC4472, 
+               start = list(I.e = 20., r.e = 120., n = 4.), model = T, 
+               trace = T)
+NGC4406.fit <- nls(surf_mag ~ -2.5 * log10(I.e * 10^(-(0.868 * n - 0.142) * 
+               ((radius / r.e)^{1 / n} - 1))) + 32, data = NGC4406, 
+               start = list(I.e = 20., r.e = 120., n = 4.), model = T, 
+               trace = T)
+NGC4551.fit <- nls(surf_mag ~ -2.5 * log10(I.e * 10^(-(0.868 * n - 0.142) * 
+               ((radius / r.e)^{1 / n} - 1))) + 26, data = NGC4551, 
+               start = list(I.e = 20., r.e = 15., n = 4.), model = T, 
+               trace = T)
+```
+
+```{r message=FALSE}
+ngc2 <- ggplot() +
+  geom_point(aes(NGC4472.fit$model$radius, NGC4472.fit$model$surf_mag), 
+             color = 'darkblue') +
+  geom_smooth(aes(NGC4472.fit$model$radius, fitted(NGC4472.fit)), 
+              color = 'red3') +
+  theme_bw() +
+  labs(x = 'Radius', y = 'Surface Brightness', title = 'NGC4472 (Messier 49)')
+ngc6 <- ggplot() +
+  geom_point(aes(NGC4406.fit$model$radius, NGC4406.fit$model$surf_mag), 
+             color = 'darkblue') +
+  geom_smooth(aes(NGC4406.fit$model$radius, fitted(NGC4406.fit)), 
+              color = 'red3') +
+  theme_bw() +
+  labs(x = 'Radius', y = 'Surface Brightness', title = 'NGC4406 (Messier 86)')
+ngc1 <- ggplot() +
+  geom_point(aes(NGC4551.fit$model$radius, NGC4551.fit$model$surf_mag), 
+             color = 'darkblue') +
+  geom_smooth(aes(NGC4551.fit$model$radius, fitted(NGC4551.fit)), 
+              color = 'red3') +
+  theme_bw() +
+  labs(x = 'Radius', y = 'Surface Brightness', title = 'NGC4551 (Galaxy)', 
+       caption = 'NASA Hubble Space Telescope')
+```
+
+```{r message=FALSE,fig.width=10,fig.height=7}
+ggarrange(ngc2, ngc6, ngc1) + theme_bw()
+```
+
+```{r}
+ind <- c(seq(5, 13, 2), 17, 19, 21)
+quas.cors <- cor(as.matrix(quas[, ind]))
+pc <- princomp(quas[, -(1:3)])
+s <- cov(quas[, -1])
+es <- eigen(s)
+```
+
+```{r T2}
+ T.2 <- function(X, mu0){
+        n <- nrow(X)
+        p <- ncol(X)
+        D <- matrix((apply(X,2, mean) - mu0), ncol = 1)
+        S <- var(X)
+        T2 <- t(D) %*% solve(S) %*% D
+        p.value <- pf((n - p) * T2 / ((n - 1) * p), df1 = p, df2 = n - p,
+                   lower.tail = FALSE) 
+        out <- list("T-Squared" = T2, "p.value" = p.value)
+        out}
+```
+
+```{r include=FALSE}
+mag.X <- quas[, ind] # data matrix
+mu0 <- c(17, 17, 17, 17, 17, 15, 15, 15) # hypothesized mean vector comparing against
+T.2(mag.X, mu0) # p < 0.05, function computes the Hotelling's T^2 statistic and p-value
+```
+
+1. T-Squared Statistic
+Value: 31.39301
+This is the test statistic for the Hotelling’s T-squared test. It measures the distance between the sample mean vector and the hypothesized mean vector in multivariate space.
+
+2. P-Value
+Value: 0.0002795245
+The p-value is very small (less than the common significance level of 0.05). This suggests that the result is statistically significant.
+
+Given the low p-value, reject the null hypothesis, which often states that the mean vector of the multivariate sample is equal to the hypothesized mean vector. This means that there is strong evidence that the multivariate means are significantly different from the hypothesized means.
+
+The very low p-value indicates significant evidence against the null hypothesis, suggesting that the multivariate means are different from what was hypothesized.
+
+```{r}
+outt <- lm(cbind(u_mag, g_mag) ~ z + r_mag + i_mag + z_mag, data = quas)
+m.out <- manova(outt)
+z <- quasars$z
+r_i <- quasars$r_mag - quasars$i_mag
+```
+
+```{r include=FALSE}
+medii <- paste0("Median: ", median(quasars$z), ' m')
+zzz <- quasars %>%
+  ggplot(aes(z, fill = cut(z, 100))) + 
+  geom_histogram(binwidth = .2, colour = "goldenrod2", fill = "darkblue") +
+  geom_density(aes(y = after_stat(count) * .2), fill = "blue", alpha = .3, 
+               col = "gold") +
+  geom_vline(xintercept = median(z), linetype = 'dashed', col = 'white') +
+  theme_bw() +
+  labs(x = 'Redshift', y = '', subtitle = medii)
+zpz <- qplot(seq_along(quantile(quasars$z, seq(1, 100, 1) / 100)),
+      quantile(quasars$z, seq(1, 100, 1) / 100)) +
+  geom_point(color = 'red3') + 
+  theme_bw() + coord_flip() + 
+  labs(x = '%', y = 'Redshift', subtitle = 'Quasars')
+denZ <- quasars %>%
+ggplot(aes(z)) +
+  stat_density(kernel = "gaussian", fill = 'darkblue', alpha = .7, 
+               bw = bw.nrd(z), color = 'gold') +
+  geom_density(kernel = "gaussian", color = 'red') +
+  theme_bw() +
+  labs(x = 'Redshift', y = 'Density', subtitle = 'Gaussian')
+```
+
+```{r fig.width=10,fig.height=7}
+ggarrange(zzz, zpz, denZ) + theme_bw()
+```
+
+Quasars Dataset
+
+- SDSS J: SDSS designation
+- R.A.: Right Ascension (sky coordinate equivalent to longitude on the Earth, 0 to 360 degrees)
+- Dec.: Declination (sky coordinate equivalent to latitude on the Earth, -90 to +90 degrees)
+- z: Redshift (scales with distance)
+- u_mag: Brightness in the u (ultraviolet) band in magnitudes.  Magnitudes are an inverted logarithmic unit of brightness (a quasar with u_mag=16 is 100-times brighter than one with u_mag=21).
+- sig_u: Measurement error of u_mag.  The heteroscedastic measurement errors for each magnitude are determined by the SDSS team from knowledge of the observing conditions, detector background, and other technical considerations.
+- g_mag: Brightness in the g (green) band
+- sig_g
+- r_mag: Brightness in the r (red) band
+- sig_r
+- i_mag: Brightness in the i (more red) band
+- sig_i
+- z_mag: Brightness in the z (even more red) band
+- sig_z
+- Radio: Brightness in the radio band, in "magnitudes" scaled from the flux density measured in the NRAO FIRST survey at 20cm.  "0" indicates the quasar is undetected by FIRST, while "-1" indicates it was not observed by FIRST.
+- X-ray: Brightness in the X-ray band, in log(Count rate) from the ROSAT All-Sky Survey (RASS) in the 0.2-2.4 keV band.  "-9" indicates not detected by RASS.
+- J: Brightness in the near-infrared J band, in magnitudes, from the 2MASS Point Source Catalog.
+- sig_J
+- H: Brightness in the near-infrared H band
+- sig_H
+- K: Brightness in the near-infrared K band
+- sig_K
+- M_i: The absolute magnitude in the i band.  This is an inverted logarithmic measure of the intrinsic luminosity of the quasar.  A quasar with M_i=-29 is 100-times more luminous than one with M_i=-24.
+
+```{r}
+z.red <- quas[, 4]
+X.miss <- quasars[1:50,5]
+Y.miss <- c(quasars[1:48,4],NA,NA)
+xy.miss <- as.data.frame(X.miss)
+xy.miss <- cbind(xy.miss, Y.miss)
+```
+
+```{r}
+zz.red <- as.data.frame(z.red)
+mmedii <- paste0("Median: ", median(z.red), ' m')
+zzzz <- zz.red %>%
+  ggplot(aes(z.red, fill = cut(z.red, 100))) + 
+  geom_histogram(binwidth = .2, colour = "goldenrod2", fill = "darkblue") +
+  stat_density(aes(y = after_stat(count) * .2), fill = "blue", alpha = .3, 
+               col = "gold") +
+  geom_vline(xintercept = median(z.red), linetype = 'dashed', col = 'white') +
+  theme_bw() +
+  labs(x = 'Redshift', y = '', subtitle = mmedii)
+denZred <- zz.red %>%
+ggplot(aes(z.red)) +
+  stat_density(kernel = "gaussian", fill = 'darkblue', alpha = .7, 
+               bw = bw.nrd(z.red), color = 'gold') +
+  geom_density(kernel = "gaussian", color = 'red') +
+  theme_bw() +
+  labs(x = 'Redshift', y = 'Density', subtitle = 'Gaussian')
+```
+
+```{r}
+ggarrange(zzzz, denZred) + theme_bw()
+```
+
+```{r}
+redd <- quasars %>%
+ggplot(aes(z, r_i, color = after_stat(y < 0))) +
+  geom_point(cex = .1) +
+  scale_colour_manual(values = c("red3", 'gold')) +
+  geom_smooth(method = 'gam', formula = y ~ s(x, bs = "cs"), aes(z, r_i), color = 'red') +
+  geom_hline(yintercept = 0, linetype = 'dashed', col = 'black') +
+  theme_bw() +
+  theme(legend.position = c(1, 0.01), 
+        legend.justification = c(1.01, 0)) +
+  labs(x = 'Redshift', y = 'Red Band')
+uvRed <- xy.miss %>% drop_na(Y.miss) %>%
+  ggplot(aes(Y.miss, X.miss, color = after_stat(y < 20))) +
+  geom_point(cex = 4) +
+  scale_colour_manual(values = c("darkblue", "purple4")) +
+  geom_smooth(method = 'loess', formula = y ~ x, aes(Y.miss, X.miss), color = 'purple') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  labs(y = 'Ultraviolet', x = 'Redshift')
+```
+
+```{r fig.width=10,fig.height=7}
+ggarrange(redd, uvRed) + theme_bw()
+```
+
+```{r}
+Si_IV_1394 <- read.table(paste(loc, "QSO_absorb.txt", sep = ""), skip = 1, 
+                         nrows = 104)[, 2]
+silicon <- as.data.frame(Si_IV_1394)
+```
+
+```{r}
+mmeedii <- paste0("Median: ", median(Si_IV_1394), ' km/s')
+siliHist <- silicon %>%
+  ggplot(aes(Si_IV_1394, fill = cut(Si_IV_1394, 100))) +
+  geom_histogram(binwidth = .08, colour = "goldenrod2", fill = "darkblue") +
+  stat_density(aes(y = after_stat(count) * .08), fill = "blue", alpha = .3, 
+               col = "gold") +
+  geom_vline(xintercept = median(Si_IV_1394), linetype = 'dashed', 
+             col = 'white') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  labs(x = 'Velocity (km/s)', y = '', subtitle = mmeedii)
+denSili <- silicon %>%
+ggplot(aes(Si_IV_1394)) +
+  stat_density(kernel = "gaussian", fill = 'darkblue', alpha = .7, 
+               bw = bw.nrd(Si_IV_1394), color = 'gold') +
+  geom_density(kernel = "gaussian", color = 'red') +
+  theme_bw() +
+  labs(x = 'Velocity (km/s)', y = 'Density', subtitle = 'Gaussian')
+```
+
+```{r fig.width=10,fig.height=7}
+ggarrange(siliHist, denSili) + theme_bw() + 
+  labs(subtitle = 'Silicon Absorption Line Spectra', title = 'Quasars')
+```
+
+```{r}
+datLoc <- "http://astrostatistics.psu.edu/MSMA/datasets/"
+SDSS_qso <- read.table(paste(datLoc, "SDSS_17K.dat", sep = ""), header = T)
+qso_r <- SDSS_qso[, 5]
+qso_R <- as.data.frame(qso_r)
+```
+
+```{r}
+mdn <- paste0("Median: ", median(qso_r), ' m')
+rBand <- qso_R %>%
+  ggplot(aes(qso_r, fill = cut(qso_r, 100))) +
+  geom_histogram(binwidth = .8, colour = "goldenrod2", fill = "darkblue") +
+  stat_density(aes(y = after_stat(count) * .8), fill = "blue", alpha = .3, 
+               col = "gold") +
+  geom_vline(xintercept = median(qso_r), linetype = 'dashed', col = 'white') +
+  theme_bw() +
+  theme(legend.position = 'none') +
+  labs(x = 'Red Band', y = '', subtitle = mdn)
+denRB <- qso_R %>%
+ggplot(aes(qso_r)) +
+  stat_density(kernel = "gaussian", fill = 'darkblue', alpha = .7, 
+               bw = bw.nrd(qso_r), color = 'gold') +
+  geom_density(kernel = "gaussian", color = 'red') +
+  theme_bw() +
+  labs(x = 'Red Band', y = 'Density', subtitle = 'Gaussian')
+```
+
+```{r}
+ggarrange(rBand, denRB) + theme_bw()
+```
+
+
+
+
+
+
+
+
